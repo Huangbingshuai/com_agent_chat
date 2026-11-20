@@ -2,11 +2,26 @@
 
 基于 LangGraph 的多 Agent 私有知识库。项目提供文档解析、知识图谱、语义检索和 RAG 问答；Python API 与 Web 前端在本机运行，Neo4j、ChromaDB、Kafka 和 Zookeeper 由 Docker Compose 提供。
 
+![智能问答 Web 界面（空知识库初始状态）](docs/screenshots/web-ui-empty.png)
+
+## 目录
+
+- [功能](#功能)
+- [工作流程](#工作流程)
+- [环境要求](#环境要求)
+- [快速开始](#快速开始)
+- [地址与健康检查](#地址与健康检查)
+- [常用运维命令](#常用运维命令)
+- [API 概览](#api-概览)
+- [项目结构](#项目结构)
+- [故障排查](#故障排查)
+- [参考](#参考)
+
 ## 功能
 
 - **文档入库**：解析 PDF、图片、TXT、Markdown、HTML、DOCX、PPTX、CSV 和 Excel 文件。
 - **知识抽取**：使用 OpenAI 兼容的聊天 API 抽取实体、关系和事件，并写入 Neo4j。
-- **语义检索**：在本地 CPU 上运行 `BAAI/bge-m3`，生成 1024 维向量并保存到 ChromaDB。
+- **语义检索**：使用 DeepSeek 配置时，在本地 CPU 上运行 `BAAI/bge-m3`，生成 1024 维向量并保存到 ChromaDB。
 - **智能问答**：结合向量检索与知识图谱检索，生成包含来源的答案。
 - **管理与更新**：查询知识库统计，并通过 API 触发文档更新流程。
 
@@ -25,8 +40,12 @@ flowchart LR
     QA --> Chroma
     QA --> Neo
     QA --> LLM[OpenAI 兼容聊天 API]
-    Kafka[(Kafka + Zookeeper)] -. CDC 消息 .-> Update[知识更新 Agent]
+    API --> Update[文档更新工作流]
+    Update --> Chroma
+    Update --> Neo
 ```
+
+Kafka 和 Zookeeper 随 Compose 启动。CDC 消费方法在代码中提供，但 `start-local.sh` 不会自动启动消费者；当前文档更新入口是 `/api/admin/update`。
 
 ## 环境要求
 
@@ -75,7 +94,7 @@ snapshot_download(
 PY
 ```
 
-模型来源：[魔搭社区 BAAI/bge-m3](https://modelscope.cn/models/BAAI/bge-m3)。下载目录默认为 `models/bge-m3`。模型路径相对于仓库根目录，可通过 `LOCAL_EMBEDDING_MODEL_PATH` 修改。模型运行时从本地加载，不需要 Embedding API。
+模型来源：[魔搭社区 BAAI/bge-m3](https://modelscope.cn/models/BAAI/bge-m3)。下载目录默认为 `models/bge-m3`。模型路径相对于仓库根目录，可通过 `LOCAL_EMBEDDING_MODEL_PATH` 修改。当前代码在 `OPENAI_BASE_URL` 包含 `deepseek` 时使用本地 BGE-M3；其他 API 地址会使用 `EMBEDDING_MODEL` 配置的 OpenAI 兼容 Embedding API。
 
 ### 3. 配置聊天 API
 
@@ -96,6 +115,17 @@ CHROMA_PORT=8000
 ```
 
 `.env` 包含密钥，已被 Git 忽略。DeepSeek Key 用于聊天和知识抽取；向量由本地 BGE-M3 生成。
+
+| 环境变量 | 必需 | 用途与默认值 |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | LLM 功能必需 | 聊天及知识抽取 API Key；只在本机 `.env` 中填写 |
+| `OPENAI_BASE_URL` | 否 | API 地址；默认 `https://api.openai.com/v1`，DeepSeek 使用 `https://api.deepseek.com` |
+| `OPENAI_MODEL` | 否 | 聊天模型；默认 `gpt-4o`，需与服务商支持的模型名一致 |
+| `LOCAL_EMBEDDING_MODEL_PATH` | 否 | 本地模型目录；默认 `models/bge-m3` |
+| `EMBEDDING_MODEL` | 否 | 非 DeepSeek 地址使用的远程 Embedding 模型 |
+| `DISABLE_LOCAL_EMBEDDINGS` | 否 | 默认 `0`；设为 `1` 会关闭本地向量生成 |
+| `VECTOR_STORE_TYPE` | 否 | 默认 `chroma`；`pgvector` 需要另行提供 PostgreSQL 服务 |
+| `CHROMA_HOST` / `CHROMA_PORT` | 否 | ChromaDB 地址；默认 `localhost:8000` |
 
 ### 4. 启动前后端和依赖服务
 
@@ -122,6 +152,8 @@ curl -fsS http://127.0.0.1:8081/api/health
 curl -fsS http://127.0.0.1:8081/api/admin/stats
 curl -fsS http://127.0.0.1:8000/api/v2/heartbeat
 ```
+
+API 健康检查成功时返回 `{"status":"ok","service":"com_agent_chat"}`。
 
 Neo4j Compose 默认开发凭据为 `neo4j/password`，不要将此默认凭据用于对外暴露的部署。
 
@@ -154,6 +186,14 @@ API 日志输出在运行 `./start-local.sh` 的终端。按 `Ctrl+C` 停止 API
 | `POST` | `/api/admin/update` | 触发文档更新工作流 |
 
 完整的参数和响应格式见 [Swagger 文档](http://127.0.0.1:8081/docs)。向量保存在 `knowledge_chunks_bge_m3` collection 中，旧 collection 会保留。
+
+提交一个问答请求：
+
+```bash
+curl -X POST http://127.0.0.1:8081/api/qa/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"这个知识库里有哪些主题？"}'
+```
 
 ## 项目结构
 
