@@ -1,64 +1,60 @@
 # com_agent_chat
 
-基于 LangGraph 的多 Agent 私有知识库项目，提供文档解析与入库、知识图谱构建、混合检索问答和文档增量更新接口。当前推荐以 Conda 在本机运行 Python API 与 Web 前端，以 Docker Compose 隔离启动 Neo4j、ChromaDB、Zookeeper 和 Kafka。
+基于 LangGraph 的多 Agent 私有知识库。项目提供文档解析、知识图谱、语义检索和 RAG 问答；Python API 与 Web 前端在本机运行，Neo4j、ChromaDB、Kafka 和 Zookeeper 由 Docker Compose 提供。
 
 ## 功能
 
-| 模块 | 作用 |
-| --- | --- |
-| 文档解析 | 解析 PDF、图片、TXT、Markdown、HTML、DOCX、PPTX、CSV 和 Excel 文件，并切分文本块 |
-| 知识抽取 | 调用 OpenAI 兼容的聊天模型抽取实体、关系和事件，写入 Neo4j |
-| 语义检索 | 使用本地 `BAAI/bge-m3` 生成 1024 维向量，存入 ChromaDB |
-| 智能问答 | 查询改写后并行执行向量和图谱检索，生成带来源的答案 |
-| 管理与更新 | 查看向量、实体、关系统计；提供文档更新 API |
+- **文档入库**：解析 PDF、图片、TXT、Markdown、HTML、DOCX、PPTX、CSV 和 Excel 文件。
+- **知识抽取**：使用 OpenAI 兼容的聊天 API 抽取实体、关系和事件，并写入 Neo4j。
+- **语义检索**：在本地 CPU 上运行 `BAAI/bge-m3`，生成 1024 维向量并保存到 ChromaDB。
+- **智能问答**：结合向量检索与知识图谱检索，生成包含来源的答案。
+- **管理与更新**：查询知识库统计，并通过 API 触发文档更新流程。
 
-## 架构
+## 工作流程
 
 ```mermaid
 flowchart LR
-    UI[Web UI] --> API[FastAPI]
-    API --> WF[LangGraph 工作流]
-    WF --> PARSER[文档解析 Agent]
-    WF --> EXTRACT[知识抽取 Agent]
-    WF --> QA[问答 Agent]
-    WF --> UPDATE[知识更新 Agent]
-    PARSER --> EMB[BGE-M3 本地 Embedding Worker]
-    EMB --> CHROMA[(ChromaDB)]
-    EXTRACT --> NEO[(Neo4j)]
-    QA --> CHROMA
-    QA --> NEO
-    API --> LLM[OpenAI 兼容聊天 API]
-    KAFKA[(Kafka + Zookeeper)] -. CDC 消息服务 .-> UPDATE
+    User[用户 / Web UI] --> API[FastAPI]
+    API --> Ingest[文档入库工作流]
+    Ingest --> Parse[文档解析 Agent]
+    Parse --> Extract[知识抽取 Agent]
+    Extract --> Neo[(Neo4j)]
+    Parse --> Embed[BGE-M3 本地 Embedding Worker]
+    Embed --> Chroma[(ChromaDB)]
+    API --> QA[问答工作流]
+    QA --> Chroma
+    QA --> Neo
+    QA --> LLM[OpenAI 兼容聊天 API]
+    Kafka[(Kafka + Zookeeper)] -. CDC 消息 .-> Update[知识更新 Agent]
 ```
-
-本机运行时，Compose 项目名固定为 `com-agent-chat`，因此容器、网络和命名卷使用该项目的 Compose 命名空间；API 和前端由 Conda 环境中的本机进程提供。Embedding 模型从 `models/bge-m3` 本地加载，不需要 Embedding API。
 
 ## 环境要求
 
-- macOS 或 Linux；Conda（推荐 Python 3.12）
-- Docker Desktop 或 Docker Engine，支持 Docker Compose v2
-- 至少约 3 GB 可用磁盘空间用于 BGE-M3 dense 模型文件
-- OpenAI 兼容聊天 API 的 API Key；DeepSeek 可作为聊天模型服务
-- 如需图片 OCR，请安装系统级 Tesseract，并配置所需语言包
+- macOS 或 Linux
+- Conda 与 Python 3.12
+- Docker Desktop 或 Docker Engine，以及 Docker Compose v2
+- 至少 3 GB 可用磁盘空间，用于 BGE-M3 dense 模型文件
+- OpenAI 兼容的聊天 API 密钥；DeepSeek 可用作聊天模型服务
+- 图片 OCR 需要系统级 Tesseract 和对应语言包
 
 ## 快速开始
 
-以下命令在项目的 `code` 目录执行。
-
-### 1. 创建 Conda 环境并安装依赖
+### 1. 克隆项目并安装 Python 依赖
 
 ```bash
-cd /path/to/com_agent_chat/code
+git clone https://github.com/Huangbingshuai/com_agent_chat.git
+cd com_agent_chat
+
 conda create -n com-agent-chat python=3.12 -y
 conda activate com-agent-chat
 python -m pip install -r python/requirements.txt
 ```
 
-如果已经创建过 `com-agent-chat` 环境，直接激活并安装依赖即可。
+已有 `com-agent-chat` 环境时，激活该环境并安装依赖即可。
 
-### 2. 下载本地 BGE-M3
+### 2. 下载 BGE-M3
 
-模型权重不会提交到 Git 仓库。首次下载前安装 ModelScope SDK；下面的过滤项排除 ONNX、图片和 sparse/ColBERT 权重，只保留当前 dense 向量服务所需文件。
+模型权重不存放在 Git 仓库中。以下命令从魔搭社区下载 dense 检索所需文件，并跳过 ONNX、图片、sparse 和 ColBERT 文件：
 
 ```bash
 python -m pip install modelscope
@@ -79,18 +75,18 @@ snapshot_download(
 PY
 ```
 
-模型来源：[魔搭社区 BAAI/bge-m3](https://modelscope.cn/models/BAAI/bge-m3)。模型文件默认放在 `code/models/bge-m3`，也可通过 `LOCAL_EMBEDDING_MODEL_PATH` 修改相对 `code` 目录的路径。首次加载会在本地 CPU 上初始化模型，耗时取决于设备。
+模型来源：[魔搭社区 BAAI/bge-m3](https://modelscope.cn/models/BAAI/bge-m3)。下载目录默认为 `models/bge-m3`。模型路径相对于仓库根目录，可通过 `LOCAL_EMBEDDING_MODEL_PATH` 修改。模型运行时从本地加载，不需要 Embedding API。
 
-### 3. 配置聊天模型
+### 3. 配置聊天 API
 
 ```bash
 cp python/.env.example python/.env
 ```
 
-编辑 `python/.env`，至少设置聊天 API Key、兼容 API 地址和聊天模型。DeepSeek 示例：
+编辑 `python/.env`，填入自己的 API Key 和聊天模型配置。DeepSeek 示例：
 
 ```dotenv
-OPENAI_API_KEY=填入你自己的DeepSeek_API_Key
+OPENAI_API_KEY=你的DeepSeek_API_Key
 OPENAI_BASE_URL=https://api.deepseek.com
 OPENAI_MODEL=deepseek-flash
 LOCAL_EMBEDDING_MODEL_PATH=models/bge-m3
@@ -99,48 +95,27 @@ CHROMA_HOST=localhost
 CHROMA_PORT=8000
 ```
 
-`.env` 包含密钥，不要提交到仓库。Dense embedding 使用本地 BGE-M3；DeepSeek Key 只用于聊天和知识抽取等 LLM 调用。
+`.env` 包含密钥，已被 Git 忽略。DeepSeek Key 用于聊天和知识抽取；向量由本地 BGE-M3 生成。
 
-### 4. 一键启动
+### 4. 启动前后端和依赖服务
 
 ```bash
 ./start-local.sh
 ```
 
-脚本会先以 `com-agent-chat` 项目名启动 Neo4j、ChromaDB、Zookeeper 和 Kafka，等待依赖就绪，再通过 `conda run -n com-agent-chat` 启动本地 API 和前端。API 端口为 `8081`；如果端口已占用，脚本会停止并显示占用进程，不会自动结束它。
+脚本按 `com-agent-chat` Compose 项目名启动 Neo4j、ChromaDB、Zookeeper 和 Kafka，等待依赖就绪后，在 Conda 环境中启动本机 API 与 Web 前端。API 监听 `127.0.0.1:8081`。若端口已被占用，脚本会显示占用进程并退出，不会自动结束该进程。
 
-## 访问地址
+## 地址与健康检查
 
 | 服务 | 地址 |
 | --- | --- |
 | Web 前端 | <http://127.0.0.1:8081> |
+| API 文档 | <http://127.0.0.1:8081/docs> |
 | API 健康检查 | <http://127.0.0.1:8081/api/health> |
-| Swagger 文档 | <http://127.0.0.1:8081/docs> |
 | Neo4j Browser | <http://127.0.0.1:7474> |
 | ChromaDB | <http://127.0.0.1:8000> |
 
-Neo4j Compose 默认开发凭据为 `neo4j/password`。请勿将默认凭据用于对外暴露的部署。
-
-## 常用命令
-
-在另一个终端中进入 `code` 目录：
-
-```bash
-# 查看项目容器状态
-docker compose --project-name com-agent-chat -f docker-compose.yml ps
-
-# 查看指定容器日志
-docker compose --project-name com-agent-chat -f docker-compose.yml logs -f neo4j chromadb kafka zookeeper
-
-# 停止项目依赖容器，保留命名卷中的数据
-docker compose --project-name com-agent-chat -f docker-compose.yml stop
-```
-
-API 日志直接查看启动 `./start-local.sh` 的终端。按 `Ctrl+C` 停止本机 API；容器仍保持运行，可用上面的 `stop` 命令停止依赖。
-
-不要用 `docker compose down -v` 做日常停止操作：`-v` 会删除项目命名卷中的 Neo4j、ChromaDB 等持久化数据。
-
-## 健康验证
+验证 API 与 ChromaDB：
 
 ```bash
 curl -fsS http://127.0.0.1:8081/api/health
@@ -148,45 +123,62 @@ curl -fsS http://127.0.0.1:8081/api/admin/stats
 curl -fsS http://127.0.0.1:8000/api/v2/heartbeat
 ```
 
-健康接口应返回 `status: ok`；统计接口应显示 `knowledge_chunks_bge_m3` collection。上传文档后，向量数会增加。
+Neo4j Compose 默认开发凭据为 `neo4j/password`，不要将此默认凭据用于对外暴露的部署。
 
-## API
+## 常用运维命令
 
-| 方法 | 路径 | 说明 |
+在另一个终端进入仓库根目录：
+
+```bash
+# 查看本项目容器
+docker compose --project-name com-agent-chat -f docker-compose.yml ps
+
+# 跟踪依赖容器日志
+docker compose --project-name com-agent-chat -f docker-compose.yml logs -f neo4j chromadb kafka zookeeper
+
+# 停止依赖容器并保留命名卷数据
+docker compose --project-name com-agent-chat -f docker-compose.yml stop
+```
+
+API 日志输出在运行 `./start-local.sh` 的终端。按 `Ctrl+C` 停止 API；Compose 依赖容器需要单独停止。避免使用 `docker compose down -v` 日常关停，因为 `-v` 会删除 Neo4j 和 ChromaDB 的持久化数据卷。
+
+## API 概览
+
+| 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | `GET` | `/api/health` | API 健康状态 |
-| `POST` | `/api/ingest/upload` | 上传单个文档，表单字段名为 `file` |
-| `POST` | `/api/ingest/batch` | 批量上传，表单字段名为 `files` |
-| `POST` | `/api/qa/ask` | JSON `{ "question": "你的问题" }` |
-| `GET` | `/api/admin/stats` | 查看向量与知识图谱统计 |
-| `POST` | `/api/admin/update` | 触发指定文档的更新流程 |
+| `POST` | `/api/ingest/upload` | 上传单个文件，表单字段 `file` |
+| `POST` | `/api/ingest/batch` | 批量上传，表单字段 `files` |
+| `POST` | `/api/qa/ask` | 提问，JSON 格式 `{ "question": "你的问题" }` |
+| `GET` | `/api/admin/stats` | 查询向量和图谱统计 |
+| `POST` | `/api/admin/update` | 触发文档更新工作流 |
 
-完整请求和响应格式可在 `/docs` 查看。
+完整的参数和响应格式见 [Swagger 文档](http://127.0.0.1:8081/docs)。向量保存在 `knowledge_chunks_bge_m3` collection 中，旧 collection 会保留。
 
-## 目录结构
+## 项目结构
 
 ```text
-code/
+.
 ├── README.md
 ├── docker-compose.yml
 ├── start-local.sh
-├── models/bge-m3/            # 本地下载，Git 忽略
+├── models/bge-m3/             # 本地模型，不提交到 Git
 └── python/
-    ├── agents/               # 文档解析、知识抽取、问答、知识更新 Agent
-    ├── api/main.py           # FastAPI 与前端静态文件
-    ├── config/settings.py    # 环境变量配置
-    ├── orchestrator/graph.py # LangGraph 工作流
-    ├── services/             # Neo4j、ChromaDB、Embedding Worker 等服务
-    ├── static/               # Web UI
+    ├── agents/                # 文档解析、知识抽取、问答、知识更新
+    ├── api/main.py            # FastAPI 与前端静态文件
+    ├── config/settings.py     # 环境配置
+    ├── orchestrator/graph.py  # LangGraph 工作流
+    ├── services/              # 向量库、知识图谱、Embedding Worker
+    ├── static/                # Web 前端
     ├── requirements.txt
     └── .env.example
 ```
 
-## 常见问题
+## 故障排查
 
-### 启动时提示端口已占用
+### 端口已占用
 
-检查占用情况后，确认对应进程再自行停止；启动脚本不会擅自杀进程。除 API 的 `8081` 外，依赖还使用 `7474`、`7687`、`8000` 和 `9092`。
+检查端口占用后再决定是否停止对应进程。依赖服务端口包括 `7474`、`7687`、`8000` 和 `9092`；API 端口为 `8081`。
 
 ```bash
 lsof -nP -iTCP:8081 -sTCP:LISTEN
@@ -194,11 +186,11 @@ lsof -nP -iTCP:8081 -sTCP:LISTEN
 
 ### Embedding Worker 无法加载模型
 
-确认 `code/models/bge-m3` 中包含 BGE-M3 的模型权重和 tokenizer 文件，并检查 `LOCAL_EMBEDDING_MODEL_PATH`。模型加载发生在本机；下载完成后，运行时使用本地文件。
+确认 `models/bge-m3` 中有 BGE-M3 权重及 tokenizer 文件，并检查 `LOCAL_EMBEDDING_MODEL_PATH`。worker 在本机 CPU 上运行模型。
 
-### 检索到旧向量或维数冲突
+### 向量维数冲突
 
-本项目使用 `knowledge_chunks_bge_m3` collection，避免与历史 collection 的向量维数冲突。切勿在未备份的情况下删除 Docker 命名卷。
+BGE-M3 使用 `knowledge_chunks_bge_m3` collection，与历史 collection 分开保存。不要为解决维数问题而删除 Docker 数据卷；删除卷会清空数据库数据。
 
 ## 参考
 
