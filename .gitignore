@@ -1,0 +1,62 @@
+# ── Python ────────────────────────
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+**/.venv/
+venv/
+env/
+.env
+*.env
+!python/.env.example
+*.env.local
+.env.*
+
+
+
+# ── IDE ───────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Docker ────────────────────────
+docker-compose.override.yml
+
+# ── Data & Uploads ────────────────
+uploads/
+*.sqlite
+*.sqlite3
+*.db
+data/
+models/
+**/chroma_data/
+**/uploads/
+
+# ── Logs ──────────────────────────
+*.log
+logs/
+
+# ── Secrets (永远不要提交) ────────
+*.pem
+*.key
+credentials.json
+secrets.yaml
+.env
+.env.*
+*.env
+!python/.env.example
+!.env.example
+
+# ── Local copies and backups ──────
+*.bak
+*(1)*
